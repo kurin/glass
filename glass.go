@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"time"
 
 	kdtree "github.com/hongshibao/go-kdtree"
@@ -146,15 +147,18 @@ func (p *point) PlaneDistance(val float64, dim int) float64 {
 }
 
 var (
-	maxX      = 58 * 40
-	maxY      = 20 * 40
+	maxX      = 2165
+	maxY      = 715
+	dx        = 40
+	dy        = 40
 	numPoints = flag.Int("num_points", 20, "number of points")
 	seed      = flag.Int64("seed", time.Now().UnixNano(), "rng seed")
+	save      = flag.Bool("save", false, "save permanently")
 )
 
 func main() {
 	flag.Parse()
-	rand.Seed(*seed)
+	rnd := rand.New(rand.NewSource(*seed))
 	td, err := ioutil.TempDir("", "")
 	if err != nil {
 		fmt.Println(err)
@@ -164,7 +168,7 @@ func main() {
 
 	var points []kdtree.Point
 	for len(points) < *numPoints {
-		x, y := rand.Float64(), rand.Float64()
+		x, y := rnd.Float64(), rnd.Float64()
 		//if x > math.Pow(rand.Float64(), 2) {
 		//	continue
 		//}
@@ -183,7 +187,8 @@ func main() {
 
 	for i, p := range points {
 		fmt.Println(i)
-		for _, nn := range points[i+1:] {
+		for j, nn := range points[i+1:] {
+			fmt.Println(">>", i+j)
 			p.(*point).biscector(nn.(*point)).drawNear(img, tree, color.RGBA{0, 0, 0, 255}, al)
 		}
 	}
@@ -201,19 +206,24 @@ func main() {
 		}
 	}
 
-	for x := 0; x < maxX; x += (maxX / 58) {
+	for x := 0; x < maxX; x += dx {
 		for y := 0; y < maxY; y++ {
 			img.Set(x, y, color.RGBA{128, 128, 128, 255})
 		}
 	}
 
-	for y := 0; y < maxY; y += (maxY / 20) {
+	for y := 0; y < maxY; y += dy {
 		for x := 0; x < maxX; x++ {
 			img.Set(x, y, color.RGBA{128, 128, 128, 255})
 		}
 	}
 
-	f, err := os.Create(filepath.Join(td, "image.png"))
+	path := filepath.Join(td, "image.png")
+	if *save {
+		path = fmt.Sprintf("%d-%d.png", *numPoints, *seed)
+	}
+
+	f, err := os.Create(path)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -227,14 +237,33 @@ func main() {
 		return
 	}
 
-	http.Handle("/", http.FileServer(http.Dir(td)))
 	fmt.Println("ok; seed is", *seed, "count is", *numPoints)
-	http.ListenAndServe(":8822", nil)
+	if !*save {
+		http.Handle("/", http.FileServer(http.Dir(td)))
+		http.ListenAndServe(":8822", nil)
+	}
+}
+
+type xys []xy
+
+func (s xys) less(i, j int) bool {
+	l := s[i]
+	r := s[j]
+	if l.x == r.x {
+		return l.y < r.y
+	}
+	return l.x < r.x
 }
 
 func (l *adjList) enStack(seen map[xy]bool) []xy {
 	var out []xy
-	for k, v := range l.l {
+	var acc xys
+	for k := range l.l {
+		acc = append(acc, k)
+	}
+	sort.Slice(acc, acc.less)
+	for _, k := range acc {
+		v := l.l[k]
 		var deg int
 		for n := range v {
 			if !seen[n] {
@@ -250,7 +279,7 @@ func (l *adjList) enStack(seen map[xy]bool) []xy {
 			return append(out, l.enStack(seen)...)
 		}
 	}
-	for k := range l.l {
+	for _, k := range acc {
 		seen[k] = true
 		out = append(out, k)
 		if len(seen) == len(l.l) {
@@ -262,6 +291,7 @@ func (l *adjList) enStack(seen map[xy]bool) []xy {
 }
 
 func colorPoints(tree *kdtree.KDTree, points []kdtree.Point, al *adjList) {
+	rnd := rand.New(rand.NewSource(*seed + 2))
 	stack := al.enStack(map[xy]bool{})
 	for i := len(stack) - 1; i >= 0; i-- {
 		p := tree.KNN(stack[i].point(), 1)[0].(*point)
@@ -269,7 +299,7 @@ func colorPoints(tree *kdtree.KDTree, points []kdtree.Point, al *adjList) {
 		for n := range al.l[p.xy()] {
 			seen[tree.KNN(n.point(), 1)[0].(*point).color] = true
 		}
-		rand.Shuffle(len(colors), func(i, j int) {
+		rnd.Shuffle(len(colors), func(i, j int) {
 			colors[i], colors[j] = colors[j], colors[i]
 		})
 		for _, c := range colors {
@@ -285,6 +315,6 @@ var colors = []color.Color{
 	color.RGBA{190, 83, 28, 255},
 	color.RGBA{241, 196, 0, 255},
 	color.RGBA{19, 104, 67, 255},
-	color.RGBA{135, 206, 235, 255},
+	color.RGBA{0, 0, 139, 255},
 	color.RGBA{89, 49, 95, 255},
 }
